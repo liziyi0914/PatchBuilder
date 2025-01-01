@@ -1,0 +1,23 @@
+[package]
+name = "patch_builder"
+version = "0.1.0"
+edition = "2021"
+authors = [
+    "liziyi0914 <liziyi0914@gmail.com>"
+]
+
+[dependencies]
+anyhow = "1.0.93"
+clap = { version = "4.5.21", features = ["cargo", "derive"] }
+hex = "0.4.3"
+log = "0.4.22"
+log4rs = "1.3.0"
+serde = { version = "1.0.215", features = ["derive"] }
+serde_json = "1.0.133"
+sha2 = "0.10.8"
+tokio = { version = "1.41.1", features = ["full"] }
+zip = "2.2.1"
+
+#[lib]
+#name = "patch_builder_lib"
+#crate-type = ["dylib", "rlib"]
