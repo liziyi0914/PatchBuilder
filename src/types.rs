@@ -22,10 +22,10 @@ pub enum SubCmd {
         platform: Option<String>,
         #[arg(long, required = true, help = "根目录")]
         input: String,
-        #[arg(long, help = "索引路径")]
+        #[arg(long, required = true, help = "索引路径")]
         index_output: String,
         #[arg(long, help = "资源目录")]
-        assets_output: String,
+        assets_output: Option<String>,
     },
     /// 构建增量包
     Compare {

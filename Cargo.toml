@@ -1,6 +1,6 @@
 [package]
 name = "patch_builder"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = [
     "liziyi0914 <liziyi0914@gmail.com>"
@@ -17,7 +17,3 @@ serde_json = "1.0.133"
 sha2 = "0.10.8"
 tokio = { version = "1.41.1", features = ["full"] }
 zip = "2.2.1"
-
-#[lib]
-#name = "patch_builder_lib"
-#crate-type = ["dylib", "rlib"]

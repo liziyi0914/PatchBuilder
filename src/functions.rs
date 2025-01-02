@@ -3,13 +3,13 @@ use std::fs;
 use std::fs::{create_dir_all, File};
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use anyhow::bail;
+use anyhow::{bail, Result};
 use log::{error, info};
 use sha2::{Digest, Sha256};
 use zip::write::SimpleFileOptions;
 use crate::types::{FileItem, Index, Migrate, Patch};
 
-fn get_file_size_and_hash(file_path: &Path) -> anyhow::Result<(u64, String)> {
+fn get_file_size_and_hash(file_path: &Path) -> Result<(u64, String)> {
     // 打开文件
     let mut file = File::open(file_path)?;
 
@@ -32,7 +32,7 @@ fn get_file_size_and_hash(file_path: &Path) -> anyhow::Result<(u64, String)> {
 }
 
 /// 获取目录中所有子文件信息
-fn list_files(path: PathBuf, root: PathBuf) -> anyhow::Result<Vec<FileItem>> {
+fn list_files(path: PathBuf, root: PathBuf) -> Result<Vec<FileItem>> {
     let mut list = vec![];
 
     let mut dir = std::fs::read_dir(path)?;
@@ -64,7 +64,7 @@ fn list_files(path: PathBuf, root: PathBuf) -> anyhow::Result<Vec<FileItem>> {
     Ok(list)
 }
 
-fn load_file_total_info(root: PathBuf, files: &mut Vec<FileItem>) -> anyhow::Result<()> {
+fn load_file_total_info(root: PathBuf, files: &mut Vec<FileItem>) -> Result<()> {
     let count = files.iter().filter(|f| !matches!(f.is_dir, Some(true))).count();
     let mut current = 0;
 
@@ -89,11 +89,11 @@ pub fn create_index(name: Option<String>,
                 platform: Option<String>,
                 input: String,
                 index_output: String,
-                assets_output: String,
-) -> anyhow::Result<()> {
+                assets_output: Option<String>,
+) -> Result<()> {
     let input_path = PathBuf::from(input);
     let index_path = PathBuf::from(&index_output);
-    let assets_path = PathBuf::from(&assets_output);
+    let assets_path_opt = assets_output.map(|s| PathBuf::from(s));
 
     info!("开始载入目录 {}", input_path.display());
 
@@ -118,11 +118,18 @@ pub fn create_index(name: Option<String>,
     let mut file = File::options().create(true).write(true).open(index_path)?;
     file.write(serde_json::to_string(&index)?.as_bytes())?;
 
+    if assets_path_opt.is_none() {
+        info!("Index文件创建成功");
+        return Ok(());
+    }
+
+    let assets_path = assets_path_opt.unwrap();
+
     if !fs::exists(&assets_path)? {
         fs::create_dir(&assets_path)?;
     }
 
-    info!("开始复制资源文件");
+    info!("开始生成资源文件集");
     let count = index.files.iter().filter(|f| !matches!(f.is_dir, Some(true))).count();
     let mut current = 0;
 
@@ -148,7 +155,7 @@ pub fn create_index(name: Option<String>,
     Ok(())
 }
 
-pub fn compare(old_index: String, new_index: String, output: Option<String>, create_patch_bundle: bool, assets_paths: Vec<String>,) -> anyhow::Result<()> {
+pub fn compare(old_index: String, new_index: String, output: Option<String>, create_patch_bundle: bool, assets_paths: Vec<String>,) -> Result<()> {
     let old_index_path = PathBuf::from(&old_index);
     let new_index_path = PathBuf::from(&new_index);
 
@@ -314,7 +321,7 @@ pub fn compare(old_index: String, new_index: String, output: Option<String>, cre
 pub fn patch(root: String,
          patch_bundle: String,
          skip_check: bool,
-) -> anyhow::Result<()> {
+) -> Result<()> {
     let root = PathBuf::from(&root);
     let patch_file = File::open(patch_bundle)?;
 
