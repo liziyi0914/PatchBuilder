@@ -8,15 +8,17 @@ pub struct Args {
     pub cmd: SubCmd,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Serialize, Deserialize)]
 pub enum SubCmd {
     /// 分析全量包
+    #[serde(rename = "create")]
     Create {
         #[arg(long, help = "项目名称")]
         name: Option<String>,
         #[arg(long, help = "版本号")]
         version: Option<String>,
         #[arg(long, help = "版本编号")]
+
         version_id: Option<u64>,
         #[arg(long, help = "平台标识")]
         platform: Option<String>,
@@ -28,6 +30,7 @@ pub enum SubCmd {
         assets_output: Option<String>,
     },
     /// 构建增量包
+    #[serde(rename = "compare")]
     Compare {
         #[arg(long, required = true, help = "旧版Index文件")]
         old_index: String,
@@ -41,6 +44,7 @@ pub enum SubCmd {
         assets_path: Vec<String>,
     },
     /// 执行增量更新
+    #[serde(rename = "patch")]
     Patch {
         #[arg(long, required = true, help = "根目录")]
         root: String,
@@ -93,4 +97,41 @@ pub struct Patch {
 pub enum Migrate {
     Add(FileItem),
     Delete(FileItem),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Status {
+    Pending,
+    Running(f32),
+    Success,
+    Failure,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusReport {
+    pub status: Status,
+    pub sub_tasks: Vec<(String, Status, f32)>,
+}
+
+impl StatusReport {
+    pub fn update_sub_task(&mut self, id: &str, status: Status) {
+        self.sub_tasks
+            .iter_mut()
+            .filter(|i|i.0==id)
+            .for_each(|i|i.1 = status.clone());
+
+        let mut progress = 0f32;
+        for (_, s, w) in self.sub_tasks.iter() {
+            if let Status::Running(p) = s {
+                progress += p * w;
+            } else if let Status::Success = s {
+                progress += w;
+            }
+        }
+        self.status = Status::Running(progress);
+
+        if self.sub_tasks.iter().all(|i| matches!(i.1, Status::Success)) {
+            self.status = Status::Success;
+        }
+    }
 }

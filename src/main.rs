@@ -1,12 +1,12 @@
 mod types;
 mod functions;
 
-use crate::types::*;
-use crate::functions::{compare, create_index, patch};
 use clap::{crate_authors, CommandFactory, FromArgMatches};
 
-#[test]
+#[cfg(test)]
 use clap::Parser;
+use patch_builder::exec;
+use patch_builder::types::*;
 
 #[tokio::main]
 async fn main() {
@@ -16,17 +16,7 @@ async fn main() {
 
     let args = parse();
 
-    match args.cmd {
-        SubCmd::Create { name, version, version_id, platform, input, index_output, assets_output } => {
-            create_index(name, version, version_id, platform, input, index_output, assets_output).unwrap();
-        }
-        SubCmd::Compare { old_index, new_index, output, create_patch_bundle, assets_path } => {
-            compare(old_index, new_index, output, create_patch_bundle, assets_path).unwrap();
-        }
-        SubCmd::Patch { root, patch_bundle, skip_check } => {
-            patch(root, patch_bundle, skip_check).unwrap();
-        }
-    }
+    exec(args.cmd, None).await.unwrap();
 }
 
 fn parse() -> Args {
@@ -57,19 +47,9 @@ async fn test_create() {
 
     log4rs::init_config(config).unwrap();
 
-    let args = Args::parse_from(r#"patch_builder.exe create --input .\test\artifacts_54\Builds\StandaloneWindows64 --output .\test\artifacts_54\bundle --name Fatal_Dopamine --version 0.45.20241105.498fdf7.54.166 --platform StandaloneWindows64"#.split(" "));
+    let args = Args::parse_from(r#"patch_builder.exe create --input .\test\artifacts_54\Builds\StandaloneWindows64 --assets-output .\test\artifacts_54\bundle --index-output .\test\artifacts_54\index.json --name Fatal_Dopamine --version 0.45.20241105.498fdf7.54.166 --platform StandaloneWindows64"#.split(" "));
     
-    match args.cmd {
-        SubCmd::Create { name, version, version_id, platform, input, index_output, assets_output } => {
-            create_index(name, version, version_id, platform, input, index_output, assets_output).unwrap();
-        }
-        SubCmd::Compare { old_index, new_index, output, create_patch_bundle, assets_path } => {
-            compare(old_index, new_index, output, create_patch_bundle, assets_path).unwrap();
-        }
-        SubCmd::Patch { root, patch_bundle, skip_check } => {
-            patch(root, patch_bundle, skip_check).unwrap();
-        }
-    }
+    exec(args.cmd, None).await.unwrap();
 }
 
 #[tokio::test]
@@ -79,18 +59,8 @@ async fn test_compare() {
     log4rs::init_config(config).unwrap();
 
     let args = Args::parse_from(r#"patch_builder.exe compare --old-index .\test\artifacts_53\bundle\index.json --new-index .\test\artifacts_54\bundle\index.json --create-patch-bundle --output .\test\artifacts_54\migrate.zip --assets-path .\test\artifacts_54\bundle\assets --assets-path .\test\artifacts_53\bundle\assets"#.split(" "));
-    
-    match args.cmd {
-        SubCmd::Create { name, version, version_id, platform, input, index_output, assets_output } => {
-            create_index(name, version, version_id, platform, input, index_output, assets_output).unwrap();
-        }
-        SubCmd::Compare { old_index, new_index, output, create_patch_bundle, assets_path } => {
-            compare(old_index, new_index, output, create_patch_bundle, assets_path).unwrap();
-        }
-        SubCmd::Patch { root, patch_bundle, skip_check } => {
-            patch(root, patch_bundle, skip_check).unwrap();
-        }
-    }
+
+    exec(args.cmd, None).await.unwrap();
 }
 
 #[tokio::test]
@@ -101,15 +71,5 @@ async fn test_patch() {
 
     let args = Args::parse_from(r#"patch_builder.exe patch --root .\test\artifacts_53\Patch\StandaloneWindows64 --patch-bundle .\test\artifacts_54\migrate.zip"#.split(" "));
 
-    match args.cmd {
-        SubCmd::Create { name, version, version_id, platform, input, index_output, assets_output } => {
-            create_index(name, version, version_id, platform, input, index_output, assets_output).unwrap();
-        }
-        SubCmd::Compare { old_index, new_index, output, create_patch_bundle, assets_path } => {
-            compare(old_index, new_index, output, create_patch_bundle, assets_path).unwrap();
-        }
-        SubCmd::Patch { root, patch_bundle, skip_check } => {
-            patch(root, patch_bundle, skip_check).unwrap();
-        }
-    }
+    exec(args.cmd, None).await.unwrap();
 }

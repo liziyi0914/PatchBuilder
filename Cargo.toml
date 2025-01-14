@@ -1,6 +1,6 @@
 [package]
 name = "patch_builder"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = [
     "liziyi0914 <liziyi0914@gmail.com>"

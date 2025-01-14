@@ -6,8 +6,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Result};
 use log::{error, info};
 use sha2::{Digest, Sha256};
+use tokio::sync::mpsc::Sender;
 use zip::write::SimpleFileOptions;
-use crate::types::{FileItem, Index, Migrate, Patch};
+use crate::types::{FileItem, Index, Migrate, Patch, Status, StatusReport};
 
 fn get_file_size_and_hash(file_path: &Path) -> Result<(u64, String)> {
     // 打开文件
@@ -64,7 +65,10 @@ fn list_files(path: PathBuf, root: PathBuf) -> Result<Vec<FileItem>> {
     Ok(list)
 }
 
-fn load_file_total_info(root: PathBuf, files: &mut Vec<FileItem>) -> Result<()> {
+async fn load_file_total_info(root: PathBuf, files: &mut Vec<FileItem>, report: &mut StatusReport, tx_opt: Option<Sender<StatusReport>>) -> Result<()> {
+    report.update_sub_task("load_file_total_info", Status::Running(0f32));
+    send(&tx_opt, report).await?;
+
     let count = files.iter().filter(|f| !matches!(f.is_dir, Some(true))).count();
     let mut current = 0;
 
@@ -78,28 +82,58 @@ fn load_file_total_info(root: PathBuf, files: &mut Vec<FileItem>) -> Result<()> 
         let (size, hash) = get_file_size_and_hash(root.join(name).as_path())?;
         item.size = Some(size);
         item.hash = Some(hash);
+
+        report.update_sub_task("load_file_total_info", Status::Running(current as f32 / count as f32));
+        send(&tx_opt, report).await?;
     }
+
+    report.update_sub_task("load_file_total_info", Status::Success);
+    send(&tx_opt, report).await?;
 
     Ok(())
 }
 
-pub fn create_index(name: Option<String>,
-                version: Option<String>,
-                version_id: Option<u64>,
-                platform: Option<String>,
-                input: String,
-                index_output: String,
-                assets_output: Option<String>,
+async fn send(tx_opt: &Option<Sender<StatusReport>>, report: &StatusReport) -> Result<()> {
+    if let Some(tx) = tx_opt {
+        tx.send(report.clone()).await?;
+    }
+    Ok(())
+}
+
+pub async fn create_index(
+    name: Option<String>,
+    version: Option<String>,
+    version_id: Option<u64>,
+    platform: Option<String>,
+    input: String,
+    index_output: String,
+    assets_output: Option<String>,
+    tx_opt: Option<Sender<StatusReport>>,
 ) -> Result<()> {
+    let mut report = StatusReport {
+        status: Status::Pending,
+        sub_tasks: vec![
+        ],
+    };
+
     let input_path = PathBuf::from(input);
     let index_path = PathBuf::from(&index_output);
     let assets_path_opt = assets_output.map(|s| PathBuf::from(s));
+
+    if assets_path_opt.is_some() {
+        report.sub_tasks.push(("load_file_total_info".to_string(), Status::Pending, 0.65));
+        report.sub_tasks.push(("write_index".to_string(), Status::Pending, 0.1));
+        report.sub_tasks.push(("gen_bundle".to_string(), Status::Pending, 0.25));
+    } else {
+        report.sub_tasks.push(("load_file_total_info".to_string(), Status::Pending, 0.9));
+        report.sub_tasks.push(("write_index".to_string(), Status::Pending, 0.1));
+    }
 
     info!("开始载入目录 {}", input_path.display());
 
     let mut list = list_files(input_path.clone().into(), input_path.clone().into())?;
 
-    load_file_total_info(input_path.clone().into(), &mut list)?;
+    load_file_total_info(input_path.clone().into(), &mut list, &mut report, tx_opt.clone()).await?;
 
     let index = Index {
         name,
@@ -114,14 +148,24 @@ pub fn create_index(name: Option<String>,
         fs::create_dir(parent)?;
     }
 
+    report.update_sub_task("write_index", Status::Running(0f32));
+    send(&tx_opt, &report).await?;
+
     info!("写入Index文件");
     let mut file = File::options().create(true).write(true).open(index_path)?;
     file.write(serde_json::to_string(&index)?.as_bytes())?;
 
+    info!("Index文件创建成功");
+
+    report.update_sub_task("write_index", Status::Success);
+    send(&tx_opt, &report).await?;
+
     if assets_path_opt.is_none() {
-        info!("Index文件创建成功");
         return Ok(());
     }
+
+    report.update_sub_task("gen_bundle", Status::Running(0f32));
+    send(&tx_opt, &report).await?;
 
     let assets_path = assets_path_opt.unwrap();
 
@@ -148,14 +192,41 @@ pub fn create_index(name: Option<String>,
         info!("复制文件({}/{}) {}  =>  {}/{}", current, count, name, &hash[..2], &hash);
         File::options().create(true).write(true).open(&asset_path)?;
         fs::copy(input_path.join(name), asset_path)?;
+
+        report.update_sub_task("gen_bundle", Status::Running(current as f32 / count as f32));
+        send(&tx_opt, &report).await?;
     }
 
-    info!("Index文件创建成功");
+    report.update_sub_task("gen_bundle", Status::Success);
+    send(&tx_opt, &report).await?;
 
     Ok(())
 }
 
-pub fn compare(old_index: String, new_index: String, output: Option<String>, create_patch_bundle: bool, assets_paths: Vec<String>,) -> Result<()> {
+pub async fn compare(
+    old_index: String,
+    new_index: String,
+    output: Option<String>,
+    create_patch_bundle: bool,
+    assets_paths: Vec<String>,
+    tx_opt: Option<Sender<StatusReport>>,
+) -> Result<()> {
+    let mut report = StatusReport {
+        status: Status::Pending,
+        sub_tasks: vec![
+        ],
+    };
+
+    if create_patch_bundle {
+        report.sub_tasks.push(("diff".to_string(), Status::Pending, 0.5));
+        report.sub_tasks.push(("create_patch_bundle".to_string(), Status::Pending, 0.5));
+    } else {
+        report.sub_tasks.push(("diff".to_string(), Status::Pending, 1f32));
+    }
+
+    report.update_sub_task("diff", Status::Running(0f32));
+    send(&tx_opt, &report).await?;
+
     let old_index_path = PathBuf::from(&old_index);
     let new_index_path = PathBuf::from(&new_index);
 
@@ -240,9 +311,15 @@ pub fn compare(old_index: String, new_index: String, output: Option<String>, cre
         info!("删除文件 {}", item.name.as_ref().unwrap());
     }
 
+    report.update_sub_task("diff", Status::Success);
+    send(&tx_opt, &report).await?;
+
     if !create_patch_bundle {
         info!("迁移信息: {}", serde_json::to_string_pretty(&migrations)?)
     } else {
+        report.update_sub_task("create_patch_bundle", Status::Running(0f32));
+        send(&tx_opt, &report).await?;
+
         let patch = Patch {
             name: index_new.name.clone(),
             version: index_new.version.clone(),
@@ -275,7 +352,12 @@ pub fn compare(old_index: String, new_index: String, output: Option<String>, cre
 
         let assets_paths = assets_paths.iter().map(|s| PathBuf::from(s)).collect::<Vec<_>>();
 
+        let total = migrations.len();
+        let mut current = 0;
+
         for m in migrations {
+            current += 1;
+
             match m {
                 Migrate::Add(item) => {
                     let hash = item.hash.clone().unwrap();
@@ -308,20 +390,41 @@ pub fn compare(old_index: String, new_index: String, output: Option<String>, cre
                 }
                 Migrate::Delete(_) => {}
             }
+
+            report.update_sub_task("create_patch_bundle", Status::Running(current as f32 / total as f32));
+            send(&tx_opt, &report).await?;
         }
 
         zip.finish()?;
 
         info!("构建成功");
+
+        report.update_sub_task("create_patch_bundle", Status::Success);
+        send(&tx_opt, &report).await?;
     }
 
     Ok(())
 }
 
-pub fn patch(root: String,
-         patch_bundle: String,
-         skip_check: bool,
+pub async fn patch(
+    root: String,
+    patch_bundle: String,
+    skip_check: bool,
+    tx_opt: Option<Sender<StatusReport>>,
 ) -> Result<()> {
+    let mut report = StatusReport {
+        status: Status::Pending,
+        sub_tasks: vec![
+        ],
+    };
+
+    if skip_check {
+        report.sub_tasks.push(("patch".to_string(), Status::Pending, 1f32));
+    } else {
+        report.sub_tasks.push(("check".to_string(), Status::Pending, 0.1));
+        report.sub_tasks.push(("patch".to_string(), Status::Pending, 0.9));
+    }
+
     let root = PathBuf::from(&root);
     let patch_file = File::open(patch_bundle)?;
 
@@ -342,7 +445,15 @@ pub fn patch(root: String,
     if !skip_check {
         info!("开始检查旧版文件");
 
+        let total = *&index.migrations.len();
+        let mut current = 0;
+
+        report.update_sub_task("check", Status::Running(0f32));
+        send(&tx_opt, &report).await?;
+
         for m in &index.migrations {
+            current += 1;
+
             if let Migrate::Delete(item) = m {
                 if item.is_dir == Some(true) {
                     continue;
@@ -356,12 +467,26 @@ pub fn patch(root: String,
                     bail!("校验失败 {}", item.name.clone().unwrap());
                 }
             }
+
+            report.update_sub_task("check", Status::Running(current as f32 / total as f32));
+            send(&tx_opt, &report).await?;
         }
+
+        report.update_sub_task("check", Status::Success);
+        send(&tx_opt, &report).await?;
     }
 
     info!("开始增量更新");
 
+    let total = *&index.migrations.len();
+    let mut current = 0;
+
+    report.update_sub_task("patch", Status::Running(0f32));
+    send(&tx_opt, &report).await?;
+
     for m in &index.migrations {
+        current += 1;
+
         match m {
             Migrate::Add(item) => {
                 let p = root.join(item.clone().name.unwrap());
@@ -400,7 +525,12 @@ pub fn patch(root: String,
                 }
             }
         }
+
+        report.update_sub_task("patch", Status::Running(current as f32 / total as f32));
+        send(&tx_opt, &report).await?;
     }
+    report.update_sub_task("patch", Status::Success);
+    send(&tx_opt, &report).await?;
 
     info!("增量更新成功");
 
